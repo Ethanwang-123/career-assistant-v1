@@ -25,7 +25,7 @@ import org.springframework.stereotype.Service;
 @Service
 public class AiService {
 
-    private static final String GEMINI_MODEL = "gemini-1.5-flash";
+    private static final String GEMINI_MODEL = "gemini-2.5-flash";
     private static final String GEMINI_ENDPOINT =
             "https://generativelanguage.googleapis.com/v1beta/models/" + GEMINI_MODEL + ":generateContent";
     private static final Duration GEMINI_TIMEOUT = Duration.ofSeconds(30);
@@ -79,7 +79,10 @@ public class AiService {
 
             HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw new AiServiceException("Gemini API request failed with status " + response.statusCode());
+                throw new AiServiceException("Gemini API request failed with status "
+                        + response.statusCode()
+                        + ". Response body: "
+                        + response.body());
             }
 
             return parseGeminiResponse(response.body());
