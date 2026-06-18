@@ -1,0 +1,7 @@
+target/
+.git/
+.idea/
+*.iml
+.DS_Store
+.mvn/apache-maven-*/
+.mvn/*.tar.gz

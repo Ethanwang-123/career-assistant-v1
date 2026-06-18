@@ -1,0 +1,9 @@
+target/
+.mvn/apache-maven-*/
+.mvn/*.tar.gz
+.idea/
+*.iml
+.DS_Store
+frontend/node_modules/
+frontend/dist/
+frontend/.env
