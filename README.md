@@ -32,7 +32,7 @@ Application Tracker is Phase 1 of a career assistant project. It provides a simp
 - Keep each user's applications private
 - Automatically store `createdAt` and `updatedAt`
 - Return dashboard statistics
-- Analyse job descriptions with a mock AI-style keyword extraction service
+- Analyse job descriptions with Google Gemini, with mock keyword extraction fallback when no API key is configured
 - Run locally with Docker Compose and PostgreSQL
 - Browser frontend for authentication, applications, dashboard, and JD analysis
 - Basic validation for required and length-limited fields
@@ -153,7 +153,7 @@ Example response:
 }
 ```
 
-Analyse a job description:
+Analyse a job description with Gemini if `GEMINI_API_KEY` is set, or with the mock fallback if it is not set:
 
 ```bash
 curl -X POST http://localhost:8080/ai/analyse-job-description \
@@ -200,6 +200,15 @@ Start the API:
 ```bash
 ./mvnw spring-boot:run
 ```
+
+To use real Gemini analysis locally, set `GEMINI_API_KEY` before starting the backend:
+
+```bash
+export GEMINI_API_KEY=your_gemini_api_key_here
+./mvnw spring-boot:run
+```
+
+If `GEMINI_API_KEY` is not set, the backend automatically uses the local mock analysis rules.
 
 The API will run at:
 
@@ -294,7 +303,17 @@ SPRING_DATASOURCE_URL
 SPRING_DATASOURCE_USERNAME
 SPRING_DATASOURCE_PASSWORD
 JWT_SECRET
+GEMINI_API_KEY
 ```
+
+To pass a Gemini key into Docker Compose from your terminal:
+
+```bash
+export GEMINI_API_KEY=your_gemini_api_key_here
+docker compose up --build
+```
+
+If you do not export `GEMINI_API_KEY`, Docker still starts and JD analysis uses the mock fallback.
 
 Test the API after startup:
 
@@ -372,6 +391,7 @@ src/main/java/com/example/applicationtracker
 │   └── JobApplication.java
 │   └── JobApplicationStatus.java
 ├── exception
+│   ├── AiServiceException.java
 │   ├── GlobalExceptionHandler.java
 │   └── ResourceNotFoundException.java
 ├── repository
@@ -438,9 +458,26 @@ Spring Data JPA auditing fills these fields automatically on `JobApplication`:
 
 `createdAt` is set when the row is first saved. `updatedAt` changes whenever the row is updated.
 
-## Mock AI Job Description Analysis
+## Gemini Job Description Analysis
 
-`AiService` currently uses keyword extraction rules instead of calling a real AI provider. It detects terms such as:
+`AiService` calls Google Gemini using the `gemini-1.5-flash` model when `GEMINI_API_KEY` is available. The API endpoint stays the same:
+
+```text
+POST /ai/analyse-job-description
+```
+
+The service asks Gemini to return strict JSON matching `AiJobDescriptionResponse`:
+
+- `roleType`
+- `requiredSkills`
+- `preferredSkills`
+- `responsibilities`
+- `cloudRelated`
+- `aiRelated`
+- `summary`
+- `suggestedProjects`
+
+If `GEMINI_API_KEY` is missing, `AiService` falls back to local keyword extraction rules. The fallback detects terms such as:
 
 - Java
 - Python
@@ -460,12 +497,33 @@ Spring Data JPA auditing fills these fields automatically on `JobApplication`:
 - cloud-native
 - distributed systems
 
-This gives the project an AI-style feature without depending on external APIs during early development.
+This keeps local development easy while allowing production or deployed environments to use real Gemini analysis.
+
+Set `GEMINI_API_KEY` on Render:
+
+1. Open the backend service in Render.
+2. Go to `Environment`.
+3. Add an environment variable named `GEMINI_API_KEY`.
+4. Paste the Gemini API key as the value.
+5. Redeploy the backend service.
+
+Test JD analysis:
+
+```bash
+curl -X POST http://localhost:8080/ai/analyse-job-description \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token>" \
+  -d '{
+    "jobDescription": "We need a Java Spring Boot engineer to build REST APIs on AWS with Docker, Kubernetes, SQL and cloud-native distributed systems experience."
+  }'
+```
+
+If Gemini is unavailable or returns an invalid response, the backend returns a clear `502` JSON error response.
 
 Later, `AiService` can be replaced with a provider-backed implementation:
 
 - OpenAI: send the job description to a model and ask for structured JSON matching `AiJobDescriptionResponse`.
-- Gemini: use the same DTO response shape, but call Gemini from inside `AiService`.
+- Gemini: already supported through `AiService` and `GEMINI_API_KEY`.
 - Apple Foundation Models: keep the controller and DTOs, but route analysis to an on-device model where available.
 
 The API contract can stay the same while the internal implementation changes.
@@ -475,9 +533,6 @@ The API contract can stay the same while the internal implementation changes.
 - Add MySQL configuration for persistent local development
 - Add production Docker secrets instead of plain Compose environment variables
 - Add cloud deployment using AWS, Azure, Google Cloud, or Render/Fly.io
-- Add user accounts and authentication
 - Add filters by company, status, date, and deadline
-- Replace mock AI job description analysis with a real AI provider
 - Add AI resume and cover letter suggestions
 - Deploy the backend to a cloud platform
-- Add a frontend dashboard

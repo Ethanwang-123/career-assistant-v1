@@ -2,13 +2,14 @@ package com.example.applicationtracker.service;
 
 import com.example.applicationtracker.dto.AiJobDescriptionRequest;
 import com.example.applicationtracker.dto.AiJobDescriptionResponse;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class AiServiceTest {
 
-    private final AiService aiService = new AiService();
+    private final AiService aiService = new AiService(new ObjectMapper(), "");
 
     @Test
     void analyseJobDescriptionExtractsCloudAndAiSignals() {

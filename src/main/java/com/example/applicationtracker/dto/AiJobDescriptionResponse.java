@@ -13,6 +13,9 @@ public class AiJobDescriptionResponse {
     private String summary;
     private List<String> suggestedProjects;
 
+    public AiJobDescriptionResponse() {
+    }
+
     public AiJobDescriptionResponse(
             String roleType,
             List<String> requiredSkills,

@@ -25,6 +25,15 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(body);
     }
 
+    @ExceptionHandler(AiServiceException.class)
+    public ResponseEntity<Map<String, Object>> handleAiServiceException(AiServiceException exception) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("timestamp", LocalDateTime.now());
+        body.put("status", HttpStatus.BAD_GATEWAY.value());
+        body.put("error", exception.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(body);
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<Map<String, Object>> handleValidationErrors(MethodArgumentNotValidException exception) {
         Map<String, Object> errors = new HashMap<>();

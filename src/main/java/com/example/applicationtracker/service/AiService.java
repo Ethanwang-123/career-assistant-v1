@@ -2,15 +2,33 @@ package com.example.applicationtracker.service;
 
 import com.example.applicationtracker.dto.AiJobDescriptionRequest;
 import com.example.applicationtracker.dto.AiJobDescriptionResponse;
+import com.example.applicationtracker.exception.AiServiceException;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.IOException;
+import java.net.URI;
+import java.net.URLEncoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 @Service
 public class AiService {
+
+    private static final String GEMINI_MODEL = "gemini-1.5-flash";
+    private static final String GEMINI_ENDPOINT =
+            "https://generativelanguage.googleapis.com/v1beta/models/" + GEMINI_MODEL + ":generateContent";
+    private static final Duration GEMINI_TIMEOUT = Duration.ofSeconds(30);
 
     private static final List<String> KEYWORDS = List.of(
             "Java",
@@ -32,8 +50,135 @@ public class AiService {
             "distributed systems"
     );
 
+    private final ObjectMapper objectMapper;
+    private final HttpClient httpClient;
+    private final String geminiApiKey;
+
+    public AiService(ObjectMapper objectMapper, @Value("${gemini.api.key:}") String geminiApiKey) {
+        this.objectMapper = objectMapper;
+        this.httpClient = HttpClient.newHttpClient();
+        this.geminiApiKey = geminiApiKey;
+    }
+
     public AiJobDescriptionResponse analyseJobDescription(AiJobDescriptionRequest request) {
-        String jobDescription = request.getJobDescription();
+        if (geminiApiKey == null || geminiApiKey.isBlank()) {
+            return analyseWithMockRules(request.getJobDescription());
+        }
+
+        return analyseWithGemini(request.getJobDescription());
+    }
+
+    private AiJobDescriptionResponse analyseWithGemini(String jobDescription) {
+        try {
+            String requestBody = objectMapper.writeValueAsString(buildGeminiRequest(jobDescription));
+            HttpRequest httpRequest = HttpRequest.newBuilder(buildGeminiUri())
+                    .timeout(GEMINI_TIMEOUT)
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw new AiServiceException("Gemini API request failed with status " + response.statusCode());
+            }
+
+            return parseGeminiResponse(response.body());
+        } catch (JsonProcessingException exception) {
+            throw new AiServiceException("Could not build or parse Gemini JSON response", exception);
+        } catch (IOException exception) {
+            throw new AiServiceException("Could not connect to Gemini API", exception);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new AiServiceException("Gemini API request was interrupted", exception);
+        }
+    }
+
+    private URI buildGeminiUri() {
+        return URI.create(GEMINI_ENDPOINT + "?key=" + URLEncoder.encode(geminiApiKey, StandardCharsets.UTF_8));
+    }
+
+    private Map<String, Object> buildGeminiRequest(String jobDescription) {
+        String prompt = """
+                Analyse this job description and return only strict JSON.
+                Do not include markdown, code fences, comments, or extra text.
+
+                The JSON must exactly match this shape:
+                {
+                  "roleType": "string",
+                  "requiredSkills": ["string"],
+                  "preferredSkills": ["string"],
+                  "responsibilities": ["string"],
+                  "cloudRelated": true,
+                  "aiRelated": true,
+                  "summary": "string",
+                  "suggestedProjects": ["string"]
+                }
+
+                Job description:
+                %s
+                """.formatted(jobDescription);
+
+        Map<String, Object> schema = Map.of(
+                "type", "OBJECT",
+                "properties", Map.of(
+                        "roleType", Map.of("type", "STRING"),
+                        "requiredSkills", Map.of("type", "ARRAY", "items", Map.of("type", "STRING")),
+                        "preferredSkills", Map.of("type", "ARRAY", "items", Map.of("type", "STRING")),
+                        "responsibilities", Map.of("type", "ARRAY", "items", Map.of("type", "STRING")),
+                        "cloudRelated", Map.of("type", "BOOLEAN"),
+                        "aiRelated", Map.of("type", "BOOLEAN"),
+                        "summary", Map.of("type", "STRING"),
+                        "suggestedProjects", Map.of("type", "ARRAY", "items", Map.of("type", "STRING"))
+                ),
+                "required", List.of(
+                        "roleType",
+                        "requiredSkills",
+                        "preferredSkills",
+                        "responsibilities",
+                        "cloudRelated",
+                        "aiRelated",
+                        "summary",
+                        "suggestedProjects"
+                )
+        );
+
+        return Map.of(
+                "contents", List.of(Map.of(
+                        "parts", List.of(Map.of("text", prompt))
+                )),
+                "generationConfig", Map.of(
+                        "response_mime_type", "application/json",
+                        "response_schema", schema
+                )
+        );
+    }
+
+    private AiJobDescriptionResponse parseGeminiResponse(String responseBody) throws JsonProcessingException {
+        JsonNode textNode = objectMapper.readTree(responseBody)
+                .path("candidates")
+                .path(0)
+                .path("content")
+                .path("parts")
+                .path(0)
+                .path("text");
+
+        if (textNode.isMissingNode() || textNode.asText().isBlank()) {
+            throw new AiServiceException("Gemini API returned an empty analysis response");
+        }
+
+        return objectMapper.readValue(stripJsonCodeFence(textNode.asText()), AiJobDescriptionResponse.class);
+    }
+
+    private String stripJsonCodeFence(String text) {
+        String trimmed = text.trim();
+        if (trimmed.startsWith("```")) {
+            trimmed = trimmed.replaceFirst("^```(?:json)?\\s*", "");
+            trimmed = trimmed.replaceFirst("\\s*```$", "");
+        }
+        return trimmed.trim();
+    }
+
+    private AiJobDescriptionResponse analyseWithMockRules(String jobDescription) {
         String normalized = jobDescription.toLowerCase(Locale.ROOT);
         List<String> matchedSkills = findMatchedKeywords(normalized);
         boolean cloudRelated = containsAny(normalized, List.of(
